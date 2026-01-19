@@ -23,8 +23,8 @@ val create_stats : unit -> delivery_stats
 
 module Maildir : sig
   (** Ensure Maildir structure exists.
-      Creates {new,cur,tmp} subdirectories. *)
-  val ensure_maildir : string -> (unit, string) result
+      Creates {new,cur,tmp} subdirectories with correct ownership. *)
+  val ensure_maildir : uid:int -> gid:int -> string -> (unit, string) result
 
   (** Get Maildir path and user info for a local user.
       @return (~/Maildir, uid, gid) for the user *)

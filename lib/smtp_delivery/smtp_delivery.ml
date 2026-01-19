@@ -38,17 +38,21 @@ module Maildir = struct
     Printf.sprintf "%.0f.M%06dP%d.%s" timestamp usec pid hostname
 
   (** Ensure Maildir structure exists.
-      Creates ~/Maildir/{new,cur,tmp} if needed. *)
-  let ensure_maildir maildir_path =
+      Creates ~/Maildir/{new,cur,tmp} if needed with correct ownership. *)
+  let ensure_maildir ~uid ~gid maildir_path =
     try
       (* Create base Maildir if needed *)
-      if not (Sys.file_exists maildir_path) then
+      if not (Sys.file_exists maildir_path) then begin
         Unix.mkdir maildir_path 0o700;
+        Unix.chown maildir_path uid gid
+      end;
       (* Create subdirectories *)
       List.iter (fun subdir ->
         let path = Filename.concat maildir_path subdir in
-        if not (Sys.file_exists path) then
-          Unix.mkdir path 0o700
+        if not (Sys.file_exists path) then begin
+          Unix.mkdir path 0o700;
+          Unix.chown path uid gid
+        end
       ) subdirs;
       Ok ()
     with
@@ -79,7 +83,7 @@ module Maildir = struct
       @param message The message content (with headers)
       @return Ok filename on success, Error message on failure *)
   let deliver ~maildir_path ~uid ~gid ~message =
-    match ensure_maildir maildir_path with
+    match ensure_maildir ~uid ~gid maildir_path with
     | Error e -> Error e
     | Ok () ->
       try
