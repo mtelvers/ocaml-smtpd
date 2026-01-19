@@ -1,0 +1,4 @@
+(library
+ (name dns_client_eio)
+ (public_name smtpd.dns-client-eio)
+ (libraries dns ipaddr eio fmt cstruct))

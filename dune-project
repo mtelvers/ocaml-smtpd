@@ -34,7 +34,7 @@
   menhir
   faraday
   (dns (>= 8.0))
-  (dns-client-eio (>= 8.0))
+  (ipaddr (>= 5.0))
   base64
   cmdliner
   (alcotest :with-test)
