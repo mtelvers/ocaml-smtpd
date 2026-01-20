@@ -18,7 +18,8 @@ let load_tls_config ~cert_file ~key_file =
   match certs, key with
   | Ok certs, Ok key ->
     let cert = `Single (certs, key) in
-    (match Tls.Config.server ~certificates:cert () with
+    (* Accept TLS 1.0 through 1.3 for compatibility with older clients *)
+    (match Tls.Config.server ~version:(`TLS_1_0, `TLS_1_3) ~certificates:cert () with
      | Ok config -> Some config
      | Error _ -> None)
   | _ -> None
