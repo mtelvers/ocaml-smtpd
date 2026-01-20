@@ -264,6 +264,9 @@ module Remote = struct
                    (* Send message body *)
                    (* Dot-stuff lines starting with . *)
                    Printf.eprintf "[DELIVERY] Sending message, total length: %d bytes\n%!" (String.length message);
+                   (* Log escaped first 500 chars of message *)
+                   let preview_len = min 500 (String.length message) in
+                   Printf.eprintf "[DELIVERY] Message preview: %s\n%!" (String.escaped (String.sub message 0 preview_len));
                    let lines = String.split_on_char '\n' message in
                    (* Remove trailing empty string that results from splitting a message ending with \n *)
                    let lines = match List.rev lines with
