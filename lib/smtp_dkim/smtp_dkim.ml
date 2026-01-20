@@ -501,6 +501,13 @@ let rsa_sign key algorithm data =
     This may result in lines longer than 76 chars, but RFC 6376 says folding
     is a SHOULD not a MUST, and corrupted headers are worse than long lines. *)
 let fold_header_line line =
+  (* Write to debug file to confirm this function is called *)
+  (try
+    let oc = open_out_gen [Open_creat; Open_append; Open_text] 0o644 "/tmp/fold_debug.log" in
+    Printf.fprintf oc "fold_header_line called at %f\n" (Unix.gettimeofday ());
+    Printf.fprintf oc "Input length: %d\n" (String.length line);
+    close_out oc
+  with _ -> ());
   let buf = Buffer.create (String.length line + 50) in
   let current_line_len = ref 0 in
   let i = ref 0 in
