@@ -23,6 +23,7 @@
  (depends
   (ocaml (>= 5.0))
   (dune (>= 3.0))
+  (conf-pam :build)
   (eio (>= 1.0))
   (eio_main (>= 1.0))
   (tls-eio (>= 1.0))

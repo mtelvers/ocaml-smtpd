@@ -151,8 +151,16 @@ let canonicalize_header canon name value =
   | Simple -> canon_header_simple name value
   | Relaxed -> canon_header_relaxed name value
 
+(** Normalize line endings to CRLF *)
+let normalize_line_endings s =
+  (* First normalize CRLF to LF, then convert all LF to CRLF *)
+  let s = Str.global_replace (Str.regexp "\r\n") "\n" s in
+  Str.global_replace (Str.regexp "\n") "\r\n" s
+
 (** Simple canonicalization for body - RFC 6376 Section 3.4.3 *)
 let canon_body_simple body =
+  (* Normalize line endings first *)
+  let body = normalize_line_endings body in
   (* Remove trailing empty lines, ensure single CRLF at end *)
   let lines = Str.split (Str.regexp "\r\n") body in
   let rec remove_trailing = function
@@ -169,6 +177,8 @@ let canon_body_simple body =
 
 (** Relaxed canonicalization for body - RFC 6376 Section 3.4.4 *)
 let canon_body_relaxed body =
+  (* Normalize line endings first *)
+  let body = normalize_line_endings body in
   let lines = Str.split (Str.regexp "\r\n") body in
   let lines = List.map (fun line ->
     (* Replace sequences of WSP with single space *)
