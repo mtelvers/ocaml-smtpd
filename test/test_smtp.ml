@@ -514,6 +514,40 @@ let test_dkim_sign_and_verify_hash () =
        with Not_found ->
          fail "no bh= in signature")
 
+(** Test signing a message with empty body *)
+let test_dkim_sign_empty_body () =
+  Mirage_crypto_rng_unix.use_default ();
+  let key = Mirage_crypto_pk.Rsa.generate ~bits:2048 () in
+  let key_pem = X509.Private_key.encode_pem (`RSA key) in
+
+  match Smtp_dkim.create_signing_config
+      ~private_key_pem:key_pem
+      ~domain:"example.com"
+      ~selector:"test"
+      () with
+  | Error msg -> fail ("Failed to create config: " ^ msg)
+  | Ok config ->
+    (* Message with empty body - just headers and blank line separator *)
+    let message = "From: test@example.com\r\n\
+                   Subject: Test\r\n\
+                   \r\n" in
+
+    match Smtp_dkim.sign_message ~config ~message with
+    | Error msg -> fail ("Failed to sign empty body message: " ^ msg)
+    | Ok signed ->
+      (* Extract bh= value from the signed message *)
+      let bh_regex = Str.regexp "bh=\\([^;]*\\)" in
+      (try
+         let _ = Str.search_forward bh_regex signed 0 in
+         let bh_value = Str.matched_group 1 signed in
+
+         (* For relaxed canonicalization, empty body should hash as empty string *)
+         (* SHA256("") = 47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU= *)
+         check string "empty body bh= is hash of empty string"
+           "47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU=" bh_value
+       with Not_found ->
+         fail "no bh= in signature")
+
 (** Test header folding doesn't corrupt h= tag values *)
 
 let test_dkim_header_folding_preserves_header_names () =
@@ -737,6 +771,7 @@ let dkim_tests = [
   "body hash hi", `Quick, test_dkim_body_hash_hi;
   "body hash empty", `Quick, test_dkim_body_hash_empty;
   "sign and verify hash", `Quick, test_dkim_sign_and_verify_hash;
+  "sign empty body", `Quick, test_dkim_sign_empty_body;
   "header folding preserves names", `Quick, test_dkim_header_folding_preserves_header_names;
   "folds only at semicolons", `Quick, test_dkim_folds_only_at_semicolons;
   "hyphenated headers intact", `Quick, test_dkim_hyphenated_headers_intact;
