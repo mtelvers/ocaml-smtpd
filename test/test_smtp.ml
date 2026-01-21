@@ -439,12 +439,12 @@ let test_dkim_body_canon_relaxed_leading_ws () =
   check string "relaxed: leading kept, trailing removed" " Content here\r\n" canon2
 
 let test_dkim_body_canon_empty () =
-  (* Empty body should be CRLF after canonicalization *)
+  (* Empty body: simple adds CRLF, relaxed stays empty per RFC 6376 3.4.4 *)
   let body = "" in
   let canon_simple = Smtp_dkim.canonicalize_body Smtp_dkim.Simple body in
   let canon_relaxed = Smtp_dkim.canonicalize_body Smtp_dkim.Relaxed body in
   check string "empty body simple" "\r\n" canon_simple;
-  check string "empty body relaxed" "\r\n" canon_relaxed
+  check string "empty body relaxed" "" canon_relaxed
 
 (** Test body hash computation *)
 

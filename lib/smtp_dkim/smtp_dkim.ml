@@ -208,7 +208,7 @@ let canon_body_relaxed body =
     | line :: rest -> line :: remove_trailing rest
   in
   let lines = remove_trailing lines in
-  if lines = [] then "\r\n"
+  if lines = [] then ""  (* RFC 6376 3.4.4: empty body stays empty for relaxed *)
   else String.concat "\r\n" lines ^ "\r\n"
 
 (** Canonicalize body *)
