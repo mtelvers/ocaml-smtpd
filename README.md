@@ -280,6 +280,7 @@ Here's a complete DNS zone file showing all required records for a mail server:
 @ 10800 IN TXT "v=spf1 mx -all"
 _dmarc 10800 IN TXT "v=DMARC1; p=reject; rua=mailto:dmarc@example.com"
 _mta-sts 10800 IN TXT "v=STSv1; id=20260121"
+_smtp._tls 10800 IN TXT "v=TLSRPTv1; rua=mailto:tlsrpt@example.com"
 mail 10800 IN A 51.15.95.113
 mail._domainkey 10800 IN TXT "v=DKIM1; k=rsa; p=MIIBIjANBgkq...your_public_key..."
 mta-sts 10800 IN A 51.15.95.113
@@ -292,6 +293,7 @@ mta-sts 10800 IN A 51.15.95.113
 | `DKIM` | Public key for signature verification |
 | `DMARC` | Policy for failed SPF/DKIM checks |
 | `_mta-sts` | Declares MTA-STS policy version |
+| `_smtp._tls` | TLS-RPT reporting address (RFC 8460) |
 | `mta-sts` | A record for the policy web server |
 | `mail` | A record for the mail server |
 
