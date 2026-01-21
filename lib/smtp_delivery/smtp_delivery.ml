@@ -269,30 +269,6 @@ module Remote = struct
                      | "" :: rest -> List.rev rest
                      | _ -> lines
                    in
-
-                   (* Debug: log what we're sending *)
-                   (try
-                     let oc_debug = open_out_gen [Open_creat; Open_append; Open_text] 0o644 "/tmp/smtp_transmit_debug.log" in
-                     Printf.fprintf oc_debug "\n=== Transmitting at %f ===\n" (Unix.gettimeofday ());
-                     Printf.fprintf oc_debug "Total lines: %d\n" (List.length lines);
-                     Printf.fprintf oc_debug "Last 5 lines (escaped):\n";
-                     let last_lines = let len = List.length lines in
-                       if len <= 5 then lines
-                       else List.filteri (fun i _ -> i >= len - 5) lines in
-                     List.iter (fun line ->
-                       Printf.fprintf oc_debug "  [%d]: \"" (String.length line);
-                       String.iter (fun c ->
-                         match c with
-                         | '\r' -> Printf.fprintf oc_debug "\\r"
-                         | '\n' -> Printf.fprintf oc_debug "\\n"
-                         | c when Char.code c < 32 -> Printf.fprintf oc_debug "\\x%02x" (Char.code c)
-                         | c -> Printf.fprintf oc_debug "%c" c
-                       ) line;
-                       Printf.fprintf oc_debug "\"\n"
-                     ) last_lines;
-                     close_out oc_debug
-                   with _ -> ());
-
                    List.iter (fun line ->
                      (* Strip trailing CR if present (from CRLF line endings) *)
                      let line = if String.length line > 0 && line.[String.length line - 1] = '\r'
