@@ -619,6 +619,25 @@ let sign ~config ~headers ~body =
 
 (** Sign a complete message and return message with DKIM-Signature prepended *)
 let sign_message ~config ~message =
+  (* Debug: log message details *)
+  (try
+    let oc = open_out_gen [Open_creat; Open_append; Open_text] 0o644 "/tmp/dkim_sign_debug.log" in
+    Printf.fprintf oc "\n=== sign_message called at %f ===\n" (Unix.gettimeofday ());
+    Printf.fprintf oc "Message length: %d\n" (String.length message);
+    (* Show first 500 chars with escapes *)
+    let preview = if String.length message > 500 then String.sub message 0 500 else message in
+    Printf.fprintf oc "Message preview (escaped):\n";
+    String.iter (fun c ->
+      match c with
+      | '\r' -> Printf.fprintf oc "\\r"
+      | '\n' -> Printf.fprintf oc "\\n\n"
+      | c when Char.code c < 32 -> Printf.fprintf oc "\\x%02x" (Char.code c)
+      | c -> Printf.fprintf oc "%c" c
+    ) preview;
+    Printf.fprintf oc "\n---\n";
+    close_out oc
+  with _ -> ());
+
   (* Split message into headers and body at blank line *)
   let header_end =
     match Str.search_forward (Str.regexp "\r\n\r\n") message 0 with
@@ -640,6 +659,23 @@ let sign_message ~config ~message =
       String.sub message body_start (String.length message - body_start)
     else ""
   in
+
+  (* Debug: log extraction results *)
+  (try
+    let oc = open_out_gen [Open_creat; Open_append; Open_text] 0o644 "/tmp/dkim_sign_debug.log" in
+    Printf.fprintf oc "header_end: %d, body_start: %d\n" header_end body_start;
+    Printf.fprintf oc "Headers length: %d, Body length: %d\n" (String.length headers) (String.length body);
+    Printf.fprintf oc "Body (escaped): ";
+    String.iter (fun c ->
+      match c with
+      | '\r' -> Printf.fprintf oc "\\r"
+      | '\n' -> Printf.fprintf oc "\\n"
+      | c when Char.code c < 32 -> Printf.fprintf oc "\\x%02x" (Char.code c)
+      | c -> Printf.fprintf oc "%c" c
+    ) body;
+    Printf.fprintf oc "\n";
+    close_out oc
+  with _ -> ());
 
   match sign ~config ~headers ~body with
   | Error msg -> Error msg
