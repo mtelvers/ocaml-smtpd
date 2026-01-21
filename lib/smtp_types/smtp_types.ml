@@ -287,8 +287,16 @@ let reverse_path_to_string = function
 let forward_path_to_string addr =
   "<" ^ email_to_string addr ^ ">"
 
-(** Parse email address from string *)
+(** Parse email address from string.
+    Handles formats: user@example.com, <user@example.com> *)
 let parse_email_address s =
+  (* Remove surrounding angle brackets if present *)
+  let s = String.trim s in
+  let s =
+    if String.length s >= 2 && s.[0] = '<' && s.[String.length s - 1] = '>'
+    then String.sub s 1 (String.length s - 2)
+    else s
+  in
   match String.split_on_char '@' s with
   | [local; domain] when is_valid_local_part local && is_valid_domain domain ->
     Some { local_part = local; domain }

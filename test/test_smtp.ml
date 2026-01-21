@@ -225,6 +225,34 @@ let test_mock_auth_remove_user () =
   check bool "removed user fails" false
     (Smtp_auth.Mock_auth.authenticate auth ~username:"testuser" ~password:"testpass")
 
+(** {1 Email Address Parsing Tests} *)
+
+let test_parse_email_address_simple () =
+  match parse_email_address "user@example.com" with
+  | Some addr ->
+    check string "local part" "user" addr.local_part;
+    check string "domain" "example.com" addr.domain
+  | None -> fail "failed to parse simple email"
+
+let test_parse_email_address_with_brackets () =
+  match parse_email_address "<user@example.com>" with
+  | Some addr ->
+    check string "local part" "user" addr.local_part;
+    check string "domain" "example.com" addr.domain
+  | None -> fail "failed to parse email with angle brackets"
+
+let test_parse_email_address_with_whitespace () =
+  match parse_email_address "  <user@example.com>  " with
+  | Some addr ->
+    check string "local part" "user" addr.local_part;
+    check string "domain" "example.com" addr.domain
+  | None -> fail "failed to parse email with whitespace"
+
+let test_parse_email_address_invalid () =
+  check (option reject) "missing @" None (parse_email_address "userexample.com");
+  check (option reject) "empty string" None (parse_email_address "");
+  check (option reject) "just brackets" None (parse_email_address "<>")
+
 (** {1 Test Suites} *)
 
 let type_tests = [
@@ -234,6 +262,10 @@ let type_tests = [
   "valid domain", `Quick, test_valid_domain;
   "invalid domain", `Quick, test_invalid_domain;
   "is local domain", `Quick, test_is_local_domain;
+  "parse email address simple", `Quick, test_parse_email_address_simple;
+  "parse email address with brackets", `Quick, test_parse_email_address_with_brackets;
+  "parse email address with whitespace", `Quick, test_parse_email_address_with_whitespace;
+  "parse email address invalid", `Quick, test_parse_email_address_invalid;
 ]
 
 let relay_tests = [
