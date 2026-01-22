@@ -19,6 +19,7 @@ type deferred_message = {
 type t = {
   local_domains : string list;
   dkim_config : Smtp_dkim.signing_config option;
+  dns : Smtp_dns.t;
   deferred : (string, deferred_message list) Hashtbl.t;  (** msg_id -> deferred recipients *)
   stats : delivery_stats;
   mutable running : bool;
@@ -42,10 +43,11 @@ let default_retry_intervals = [|
 |]
 
 (** Create a new queue manager *)
-let create ~local_domains ?dkim_config () =
+let create ~local_domains ~dns ?dkim_config () =
   {
     local_domains;
     dkim_config;
+    dns;
     deferred = Hashtbl.create 64;
     stats = create_stats ();
     running = false;
@@ -59,6 +61,128 @@ let next_retry_time t retry_count =
   let idx = min retry_count (Array.length t.retry_intervals - 1) in
   now +. t.retry_intervals.(idx)
 
+(** Generate an RFC 3464 compliant bounce message (DSN).
+
+    Bounce messages are sent from the null sender to prevent
+    bounce loops. They inform the original sender that their
+    message could not be delivered. *)
+let generate_bounce ~recipient ~reason ~original_msg =
+  let now = Unix.gettimeofday () in
+  let tm = Unix.gmtime now in
+  let date = Printf.sprintf "%s, %d %s %d %02d:%02d:%02d +0000"
+      (match tm.Unix.tm_wday with
+       | 0 -> "Sun" | 1 -> "Mon" | 2 -> "Tue" | 3 -> "Wed"
+       | 4 -> "Thu" | 5 -> "Fri" | _ -> "Sat")
+      tm.Unix.tm_mday
+      (match tm.Unix.tm_mon with
+       | 0 -> "Jan" | 1 -> "Feb" | 2 -> "Mar" | 3 -> "Apr"
+       | 4 -> "May" | 5 -> "Jun" | 6 -> "Jul" | 7 -> "Aug"
+       | 8 -> "Sep" | 9 -> "Oct" | 10 -> "Nov" | _ -> "Dec")
+      (1900 + tm.Unix.tm_year)
+      tm.Unix.tm_hour tm.Unix.tm_min tm.Unix.tm_sec
+  in
+  let hostname = Unix.gethostname () in
+  let boundary = Printf.sprintf "=_bounce_%s_%d" hostname (int_of_float (now *. 1000.0)) in
+
+  (* Extract first part of original message for inclusion (headers only, max 10KB) *)
+  let original_headers =
+    let max_len = 10240 in
+    (* Find end of headers (empty line) *)
+    let header_end =
+      try
+        let pos = Str.search_forward (Str.regexp "\r?\n\r?\n") original_msg.data 0 in
+        min pos max_len
+      with Not_found -> min (String.length original_msg.data) max_len
+    in
+    String.sub original_msg.data 0 header_end
+  in
+
+  (* Build the bounce message per RFC 3464 *)
+  Printf.sprintf
+{|Date: %s
+From: Mail Delivery System <MAILER-DAEMON@%s>
+To: <%s>
+Subject: Undelivered Mail Returned to Sender
+Auto-Submitted: auto-replied
+MIME-Version: 1.0
+Content-Type: multipart/report; report-type=delivery-status;
+	boundary="%s"
+
+This is a MIME-encapsulated message.
+
+--%s
+Content-Type: text/plain; charset=utf-8
+
+This message was created automatically by the mail system.
+
+A message that you sent could not be delivered to one or more of its
+recipients. The following address(es) failed:
+
+    %s
+        %s
+
+--%s
+Content-Type: message/delivery-status
+
+Reporting-MTA: dns; %s
+Original-Envelope-Id: %s
+Arrival-Date: %s
+
+Final-Recipient: rfc822; %s
+Action: failed
+Status: 5.0.0
+Diagnostic-Code: smtp; %s
+
+--%s
+Content-Type: text/rfc822-headers
+
+%s
+
+--%s--
+|}
+    date hostname
+    (match original_msg.sender with Some s -> email_to_string s | None -> "")
+    boundary
+    boundary
+    (email_to_string recipient)
+    reason
+    boundary
+    hostname
+    original_msg.id
+    date
+    (email_to_string recipient)
+    reason
+    boundary
+    original_headers
+    boundary
+
+(** Queue a bounce message for delivery to the original sender *)
+let queue_bounce _t ~recipient ~reason ~original_msg =
+  match original_msg.sender with
+  | None ->
+    (* Original message was from null sender - don't bounce to avoid loops *)
+    Eio.traceln "Not generating bounce for null sender message"
+  | Some sender ->
+    let bounce_data = generate_bounce ~recipient ~reason ~original_msg in
+    let bounce_msg = {
+      id = Printf.sprintf "bounce-%s-%d" original_msg.id (int_of_float (Unix.gettimeofday () *. 1000.0));
+      sender = None;  (* Bounces MUST be from null sender *)
+      recipients = [sender];
+      data = bounce_data;
+      received_at = Unix.gettimeofday ();
+      auth_user = None;
+      client_ip = "127.0.0.1";
+      client_domain = Unix.gethostname ();
+    } in
+    (* Deliver bounce to local recipient *)
+    Eio.traceln "Generating bounce message for %s -> %s"
+      (email_to_string recipient) (email_to_string sender);
+    let result = Maildir.deliver_message ~recipient:sender ~msg:bounce_msg in
+    match result with
+    | Delivered -> Eio.traceln "Bounce delivered to %s" (email_to_string sender)
+    | Failed err -> Eio.traceln "Failed to deliver bounce to %s: %s" (email_to_string sender) err
+    | Deferred err -> Eio.traceln "Bounce deferred for %s: %s" (email_to_string sender) err
+
 (** Process delivery results for a message *)
 let process_results t msg results =
   let all_done = ref true in
@@ -71,8 +195,8 @@ let process_results t msg results =
 
     | Failed reason ->
       t.stats.failed <- t.stats.failed + 1;
-      Eio.traceln "Failed delivery to %s: %s" (email_to_string recipient) reason
-      (* TODO: Generate bounce message *)
+      Eio.traceln "Failed delivery to %s: %s" (email_to_string recipient) reason;
+      queue_bounce t ~recipient ~reason ~original_msg:msg
 
     | Deferred reason ->
       t.stats.deferred <- t.stats.deferred + 1;
@@ -119,14 +243,15 @@ let process_deferred t =
         Eio.traceln "Giving up on %s after %d retries: %s"
           (email_to_string deferred.recipient)
           deferred.retry_count
-          deferred.reason
-        (* TODO: Generate bounce message *)
+          deferred.reason;
+        queue_bounce t ~recipient:deferred.recipient ~reason:deferred.reason ~original_msg:deferred.msg
       end else begin
         Eio.traceln "Retrying delivery to %s (attempt %d)"
           (email_to_string deferred.recipient)
           (deferred.retry_count + 1);
 
         let result = deliver_to_recipient
+            ~dns:t.dns
             ?dkim_config:t.dkim_config
             ~local_domains:t.local_domains
             ~recipient:deferred.recipient
@@ -169,7 +294,7 @@ let process_message t msg =
     (reverse_path_to_string msg.sender);
 
   (* Attempt delivery to all recipients *)
-  let results = deliver_message ?dkim_config:t.dkim_config ~local_domains:t.local_domains ~msg () in
+  let results = deliver_message ~dns:t.dns ?dkim_config:t.dkim_config ~local_domains:t.local_domains ~msg () in
   let _all_done = process_results t msg results in
   ()
 

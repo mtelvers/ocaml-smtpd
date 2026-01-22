@@ -373,7 +373,9 @@ let test_dkim_format_auth_results () =
   check bool "contains dkim=pass" true (String.sub formatted 0 9 = "dkim=pass")
 
 let test_dkim_verify_no_signature () =
-  let dns = Smtp_dns.create () in
+  Eio_main.run @@ fun env ->
+  let net = Eio.Stdenv.net env in
+  let dns = Smtp_dns.create ~net in
   let headers = "From: user@example.com\r\nTo: other@example.org\r\n" in
   let body = "Test message body" in
   let result = Smtp_dkim.verify ~dns ~raw_headers:headers ~body in
@@ -869,20 +871,29 @@ let delivery_tests = [
 (** {1 Queue Manager Tests} *)
 
 let test_qmgr_create () =
+  Eio_main.run @@ fun env ->
+  let net = Eio.Stdenv.net env in
+  let dns = Smtp_dns.create ~net in
   let local_domains = ["example.com"; "example.org"] in
-  let qmgr = Smtp_qmgr.create ~local_domains () in
+  let qmgr = Smtp_qmgr.create ~local_domains ~dns () in
   (* Queue manager created successfully *)
   check int "deferred count starts at 0" 0 (Smtp_qmgr.deferred_count qmgr)
 
 let test_qmgr_stats () =
-  let qmgr = Smtp_qmgr.create ~local_domains:["example.com"] () in
+  Eio_main.run @@ fun env ->
+  let net = Eio.Stdenv.net env in
+  let dns = Smtp_dns.create ~net in
+  let qmgr = Smtp_qmgr.create ~local_domains:["example.com"] ~dns () in
   let stats = Smtp_qmgr.get_stats qmgr in
   check int "initial delivered" 0 stats.Smtp_delivery.delivered;
   check int "initial deferred" 0 stats.Smtp_delivery.deferred;
   check int "initial failed" 0 stats.Smtp_delivery.failed
 
 let test_qmgr_stop () =
-  let qmgr = Smtp_qmgr.create ~local_domains:["example.com"] () in
+  Eio_main.run @@ fun env ->
+  let net = Eio.Stdenv.net env in
+  let dns = Smtp_dns.create ~net in
+  let qmgr = Smtp_qmgr.create ~local_domains:["example.com"] ~dns () in
   (* Should not raise *)
   Smtp_qmgr.stop qmgr;
   check int "deferred count after stop" 0 (Smtp_qmgr.deferred_count qmgr)

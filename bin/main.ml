@@ -18,8 +18,8 @@ let load_tls_config ~cert_file ~key_file =
   match certs, key with
   | Ok certs, Ok key ->
     let cert = `Single (certs, key) in
-    (* Accept TLS 1.0 through 1.3 for compatibility with older clients *)
-    (match Tls.Config.server ~version:(`TLS_1_0, `TLS_1_3) ~certificates:cert () with
+    (* Require TLS 1.2+ per RFC 8996 (TLS 1.0/1.1 are deprecated) *)
+    (match Tls.Config.server ~version:(`TLS_1_2, `TLS_1_3) ~certificates:cert () with
      | Ok config -> Some config
      | Error _ -> None)
   | _ -> None
@@ -46,9 +46,10 @@ let run_single_memory ~port ~host ~tls_config ~implicit_tls ~local_domains ~requ
   let module Qmgr = Smtp_qmgr.Make(Smtp_queue.Memory_queue) in
   Eio_main.run @@ fun env ->
   let net = Eio.Stdenv.net env in
+  let dns = Smtp_dns.create ~net in
   let queue = Smtp_queue.Memory_queue.create () in
   let auth = Smtp_auth.Pam_auth.create ~service_name:"smtpd" in
-  let qmgr = Smtp_qmgr.create ~local_domains ?dkim_config () in
+  let qmgr = Smtp_qmgr.create ~local_domains ~dns ?dkim_config () in
 
   let config = {
     Smtp_server.default_config with
@@ -57,7 +58,7 @@ let run_single_memory ~port ~host ~tls_config ~implicit_tls ~local_domains ~requ
     require_auth_for_relay = require_auth;
     tls_config;
   } in
-  let server = Server.create ~config ~queue ~auth in
+  let server = Server.create ~config ~queue ~auth ~net in
 
   let tls_mode = if implicit_tls then " (implicit TLS)"
     else if tls_config <> None then " (STARTTLS available)" else "" in
@@ -84,9 +85,10 @@ let run_single_file ~port ~host ~tls_config ~implicit_tls ~local_domains ~requir
   let module Qmgr = Smtp_qmgr.Make(Smtp_queue.File_queue) in
   Eio_main.run @@ fun env ->
   let net = Eio.Stdenv.net env in
+  let dns = Smtp_dns.create ~net in
   let queue = Smtp_queue.File_queue.create_with_path ~base_path:queue_path in
   let auth = Smtp_auth.Pam_auth.create ~service_name:"smtpd" in
-  let qmgr = Smtp_qmgr.create ~local_domains ?dkim_config () in
+  let qmgr = Smtp_qmgr.create ~local_domains ~dns ?dkim_config () in
 
   let config = {
     Smtp_server.default_config with
@@ -95,7 +97,7 @@ let run_single_file ~port ~host ~tls_config ~implicit_tls ~local_domains ~requir
     require_auth_for_relay = require_auth;
     tls_config;
   } in
-  let server = Server.create ~config ~queue ~auth in
+  let server = Server.create ~config ~queue ~auth ~net in
 
   let tls_mode = if implicit_tls then " (implicit TLS)"
     else if tls_config <> None then " (STARTTLS available)" else "" in
@@ -120,18 +122,6 @@ let run_single_file ~port ~host ~tls_config ~implicit_tls ~local_domains ~requir
 let run_forked ~port ~host ~tls_config ~local_domains ~require_auth ~queue_path ~dkim_config =
   let module Server = Smtp_server.Make(Smtp_queue.File_queue)(Smtp_auth.Pam_auth) in
   let module Qmgr = Smtp_qmgr.Make(Smtp_queue.File_queue) in
-  let queue = Smtp_queue.File_queue.create_with_path ~base_path:queue_path in
-  let auth = Smtp_auth.Pam_auth.create ~service_name:"smtpd" in
-  let qmgr = Smtp_qmgr.create ~local_domains ?dkim_config () in
-
-  let config = {
-    Smtp_server.default_config with
-    hostname = host;
-    local_domains;
-    require_auth_for_relay = require_auth;
-    tls_config;
-  } in
-  let server = Server.create ~config ~queue ~auth in
 
   let tls_mode = if tls_config <> None then " (implicit TLS)" else "" in
   Printf.eprintf "+SMTP server starting on %s:%d (%s, fork-per-connection)%s\n%!" host port queue_path tls_mode;
@@ -142,18 +132,32 @@ let run_forked ~port ~host ~tls_config ~local_domains ~require_auth ~queue_path 
   (match Unix.fork () with
    | 0 ->
      (* Child: run queue manager *)
-     Eio_main.run @@ fun _env ->
+     Eio_main.run @@ fun env ->
+     let net = Eio.Stdenv.net env in
+     let dns = Smtp_dns.create ~net in
+     let queue = Smtp_queue.File_queue.create_with_path ~base_path:queue_path in
+     let qmgr = Smtp_qmgr.create ~local_domains ~dns ?dkim_config () in
      Eio.Switch.run @@ fun sw ->
      Qmgr.run_eio qmgr queue ~sw;
      (* Keep running until stopped *)
      while true do Unix.sleep 3600 done
    | _pid ->
      (* Parent: run SMTP server *)
-     Eio_main.run @@ fun _env ->
+     Eio_main.run @@ fun env ->
+     let net = Eio.Stdenv.net env in
+     let queue = Smtp_queue.File_queue.create_with_path ~base_path:queue_path in
+     let auth = Smtp_auth.Pam_auth.create ~service_name:"smtpd" in
+     let config = {
+       Smtp_server.default_config with
+       hostname = host;
+       local_domains;
+       require_auth_for_relay = require_auth;
+       tls_config;
+     } in
+     let server = Server.create ~config ~queue ~auth ~net in
      Eio.Switch.run @@ fun sw ->
      let ipaddr = parse_ipaddr host in
      let addr = `Tcp (ipaddr, port) in
-     let net = Eio.Stdenv.net _env in
      Server.run_forked server ~sw ~net ~addr ~tls_config)
 
 (* Main entry point *)

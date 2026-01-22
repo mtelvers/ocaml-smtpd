@@ -76,8 +76,8 @@ module Make
     dns : Smtp_dns.t;
   }
 
-  let create ~config ~queue ~auth =
-    { config; queue; auth; dns = Smtp_dns.create () }
+  let create ~config ~queue ~auth ~net =
+    { config; queue; auth; dns = Smtp_dns.create ~net }
 
   (** Send a response to the client *)
   let send_response flow response =

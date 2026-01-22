@@ -9,9 +9,11 @@ type t
 (** Create a new queue manager.
 
     @param local_domains List of domains considered local
+    @param dns DNS resolver for remote delivery
     @param dkim_config Optional DKIM signing configuration for outbound messages *)
 val create :
   local_domains:string list ->
+  dns:Smtp_dns.t ->
   ?dkim_config:Smtp_dkim.signing_config ->
   unit ->
   t

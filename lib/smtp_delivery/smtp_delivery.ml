@@ -436,8 +436,8 @@ module Remote = struct
       Deferred (Printexc.to_string exn)
 
   (** Look up MX records for a domain and return hosts sorted by priority *)
-  let lookup_mx domain =
-    match Smtp_dns.lookup_mx (Smtp_dns.create ()) domain with
+  let lookup_mx ~dns domain =
+    match Smtp_dns.lookup_mx dns domain with
     | Ok mx_records -> Ok mx_records
     | Error Smtp_dns.Not_found ->
       (* No MX record - fall back to A record per RFC 5321 *)
@@ -448,12 +448,13 @@ module Remote = struct
 
       Looks up MX records and tries each in order of priority.
 
+      @param dns DNS resolver for MX lookups
       @param dkim_config Optional DKIM signing configuration
       @param recipient The recipient email address
       @param msg The queued message
       @return Delivery result *)
-  let deliver_message ?(dkim_config : Smtp_dkim.signing_config option) ~recipient ~msg () =
-    match lookup_mx recipient.domain with
+  let deliver_message ~dns ?(dkim_config : Smtp_dkim.signing_config option) ~recipient ~msg () =
+    match lookup_mx ~dns recipient.domain with
     | Error e -> Deferred e
     | Ok mx_hosts ->
       (* Sign message with DKIM if configured *)
@@ -495,19 +496,21 @@ let is_local_recipient ~local_domains recipient =
 
     Routes to local Maildir or remote SMTP based on domain.
 
+    @param dns DNS resolver for remote delivery
     @param dkim_config Optional DKIM signing configuration for outbound messages *)
-let deliver_to_recipient ?dkim_config ~local_domains ~recipient ~msg () =
+let deliver_to_recipient ~dns ?dkim_config ~local_domains ~recipient ~msg () =
   if is_local_recipient ~local_domains recipient then
     Maildir.deliver_message ~recipient ~msg
   else
-    Remote.deliver_message ?dkim_config ~recipient ~msg ()
+    Remote.deliver_message ~dns ?dkim_config ~recipient ~msg ()
 
 (** Deliver a queued message to all recipients.
 
+    @param dns DNS resolver for remote delivery
     @param dkim_config Optional DKIM signing configuration for outbound messages
     @return List of (recipient, result) pairs *)
-let deliver_message ?dkim_config ~local_domains ~msg () =
+let deliver_message ~dns ?dkim_config ~local_domains ~msg () =
   List.map (fun recipient ->
-    let result = deliver_to_recipient ?dkim_config ~local_domains ~recipient ~msg () in
+    let result = deliver_to_recipient ~dns ?dkim_config ~local_domains ~recipient ~msg () in
     (recipient, result)
   ) msg.recipients

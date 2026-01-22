@@ -1,7 +1,7 @@
 (** SMTP DNS Resolver
 
     DNS lookups for SPF, DKIM, and DMARC verification.
-    Uses system DNS resolution via dig command. *)
+    Uses the dns library with EIO for proper async DNS resolution. *)
 
 (** DNS lookup errors *)
 type error =
@@ -18,8 +18,9 @@ type ip_addr =
 (** DNS resolver type *)
 type t
 
-(** Create a new DNS resolver *)
-val create : unit -> t
+(** Create a new DNS resolver.
+    @param net EIO network capability for DNS queries *)
+val create : net:_ Eio.Net.t -> t
 
 (** Convert IP address to string *)
 val ip_to_string : ip_addr -> string

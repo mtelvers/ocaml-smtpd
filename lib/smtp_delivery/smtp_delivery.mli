@@ -54,8 +54,9 @@ end
 
 module Remote : sig
   (** Look up MX records for a domain.
+      @param dns DNS resolver
       @return List of (priority, hostname) pairs sorted by priority *)
-  val lookup_mx : string -> ((int * string) list, string) result
+  val lookup_mx : dns:Smtp_dns.t -> string -> ((int * string) list, string) result
 
   (** Connect to an SMTP server and send a message.
 
@@ -76,8 +77,10 @@ module Remote : sig
   (** Deliver a queued message to a remote recipient.
       Looks up MX records and tries each host.
 
+      @param dns DNS resolver for MX lookups
       @param dkim_config Optional DKIM signing configuration for outbound signing *)
   val deliver_message :
+    dns:Smtp_dns.t ->
     ?dkim_config:Smtp_dkim.signing_config ->
     recipient:Smtp_types.email_address ->
     msg:Smtp_types.queued_message ->
@@ -96,8 +99,10 @@ val is_local_recipient :
 (** Deliver a message to a single recipient.
     Routes to local Maildir or remote SMTP based on domain.
 
+    @param dns DNS resolver for remote delivery
     @param dkim_config Optional DKIM signing configuration for outbound messages *)
 val deliver_to_recipient :
+  dns:Smtp_dns.t ->
   ?dkim_config:Smtp_dkim.signing_config ->
   local_domains:string list ->
   recipient:Smtp_types.email_address ->
@@ -107,9 +112,11 @@ val deliver_to_recipient :
 
 (** Deliver a queued message to all recipients.
 
+    @param dns DNS resolver for remote delivery
     @param dkim_config Optional DKIM signing configuration for outbound messages
     @return List of (recipient, result) pairs *)
 val deliver_message :
+  dns:Smtp_dns.t ->
   ?dkim_config:Smtp_dkim.signing_config ->
   local_domains:string list ->
   msg:Smtp_types.queued_message ->
