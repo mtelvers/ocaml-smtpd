@@ -1,11 +1,7 @@
 (** DNS Client for EIO *)
 
-(* Use a function to capture the network capability *)
-type send_fn = Cstruct.t list -> unit
-type recv_fn = Cstruct.t -> int
-
 type t = {
-  make_socket : unit -> send_fn * recv_fn;
+  do_query : Cstruct.t -> Cstruct.t -> int;
   timeout : float;
   mutable next_id : int;
 }
@@ -62,27 +58,15 @@ let create ~net ?nameserver ?(timeout = 5.0) () =
     | Some ns -> ns
     | None -> google_dns ()
   in
-  let make_socket () =
-    (* We need a switch for the socket, but we'll manage it per-query *)
-    let socket_ref = ref None in
-    let switch_ref = ref None in
-    let send bufs =
-      Eio.Switch.run @@ fun sw ->
-      let socket = Eio.Net.datagram_socket ~sw net nameserver in
-      socket_ref := Some socket;
-      switch_ref := Some sw;
-      Eio.Net.send socket ~dst:nameserver bufs
-    in
-    let recv buf =
-      match !socket_ref with
-      | None -> failwith "Socket not created"
-      | Some socket ->
-        let _addr, len = Eio.Net.recv socket buf in
-        len
-    in
-    (send, recv)
+  let do_query query_buf response_buf =
+    (* Create socket, send query, receive response, all in one switch scope *)
+    Eio.Switch.run @@ fun sw ->
+    let socket = Eio.Net.datagram_socket ~sw net nameserver in
+    Eio.Net.send socket ~dst:nameserver [query_buf];
+    let _addr, len = Eio.Net.recv socket response_buf in
+    len
   in
-  { make_socket; timeout; next_id = 1 }
+  { do_query; timeout; next_id = 1 }
 
 let create_from_resolv_conf ~net ?timeout () =
   let nameserver =
@@ -100,13 +84,6 @@ let get_next_id t =
   t.next_id <- (t.next_id + 1) land 0xFFFF;
   id
 
-let query_raw make_socket query_str =
-  let (send, recv) = make_socket () in
-  send [Cstruct.of_string query_str];
-  let response_buf = Cstruct.create 4096 in
-  let len = recv response_buf in
-  Cstruct.to_string (Cstruct.sub response_buf 0 len)
-
 let query : type a. t -> [ `host ] Domain_name.t -> a Dns.Rr_map.key -> (a, [> `Msg of string]) result =
   fun t name rr_type ->
   let id = get_next_id t in
@@ -115,10 +92,10 @@ let query : type a. t -> [ `host ] Domain_name.t -> a Dns.Rr_map.key -> (a, [> `
   let header = (id, flags) in
   let packet = Dns.Packet.create header question `Query in
   let query_str, _ = Dns.Packet.encode `Udp packet in
-  let response_str =
-    try query_raw t.make_socket query_str
-    with exn -> raise exn
-  in
+  let query_buf = Cstruct.of_string query_str in
+  let response_buf = Cstruct.create 4096 in
+  let len = t.do_query query_buf response_buf in
+  let response_str = Cstruct.to_string (Cstruct.sub response_buf 0 len) in
   match Dns.Packet.decode response_str with
   | Error e ->
     Error (`Msg (Fmt.str "Failed to decode DNS response: %a" Dns.Packet.pp_err e))
