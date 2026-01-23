@@ -33,7 +33,7 @@ module Make
   type t
 
   (** Create a new server instance *)
-  val create : config:config -> queue:Queue.t -> auth:Auth.t -> net:_ Eio.Net.t -> t
+  val create : config:config -> queue:Queue.t -> auth:Auth.t -> dns:Smtp_dns.t -> t
 
   (** Run server on cleartext port (single process mode) *)
   val run :
