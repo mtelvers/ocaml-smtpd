@@ -59,9 +59,9 @@ let create ~net ?nameserver ?(timeout = 5.0) () =
     | None -> google_dns ()
   in
   let do_query query_buf response_buf =
-    (* Create socket, send query, receive response, all in one switch scope *)
+    (* Create socket with ephemeral port, send query, receive response *)
     Eio.Switch.run @@ fun sw ->
-    let socket = Eio.Net.datagram_socket ~sw net nameserver in
+    let socket = Eio.Net.datagram_socket ~sw net `UdpV4 in
     Eio.Net.send socket ~dst:nameserver [query_buf];
     let _addr, len = Eio.Net.recv socket response_buf in
     len
