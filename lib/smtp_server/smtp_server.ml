@@ -752,15 +752,18 @@ module Make
       match Unix.fork () with
       | 0 ->
         Unix.close sock;
-        Eio_main.run @@ fun _env ->
+        Eio_main.run @@ fun env ->
         Eio.Switch.run @@ fun sw ->
+        (* Create fresh DNS resolver in child process to avoid EADDRINUSE *)
+        let net = Eio.Stdenv.net env in
+        let fresh_t = { t with dns = Smtp_dns.create ~net } in
         let flow = Eio_unix.Net.import_socket_stream ~sw ~close_unix:true client_sock in
         (match tls_config with
          | None ->
-           handle_connection_forked t flow ~client_ip ~tls_active:false
+           handle_connection_forked fresh_t flow ~client_ip ~tls_active:false
          | Some tls_cfg ->
            let tls_flow = Tls_eio.server_of_flow tls_cfg flow in
-           handle_connection_forked t (tls_flow :> _ Eio.Flow.two_way) ~client_ip ~tls_active:true);
+           handle_connection_forked fresh_t (tls_flow :> _ Eio.Flow.two_way) ~client_ip ~tls_active:true);
         exit 0
       | _pid ->
         Unix.close client_sock
