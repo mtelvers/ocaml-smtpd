@@ -1,7 +1,10 @@
 (** SMTP DNS Resolver
 
     DNS lookups for SPF, DKIM, and DMARC verification.
-    Uses the dns library with EIO for proper async DNS resolution. *)
+    Uses the dns library with EIO for proper async DNS resolution.
+
+    Note: dns_client_eio is not fiber-safe for concurrent queries,
+    so we use a mutex to serialize access. *)
 
 (** DNS lookup errors *)
 type error =
@@ -15,13 +18,19 @@ type ip_addr =
   | IPv4 of int * int * int * int
   | IPv6 of string
 
-(** DNS resolver type - wraps dns_client_eio *)
-type t = Dns_client_eio.t
+(** DNS resolver type - wraps dns_client_eio with a mutex for fiber safety *)
+type t = {
+  resolver : Dns_client_eio.t;
+  mutex : Eio.Mutex.t;
+}
 
 (** Create a new DNS resolver.
     @param net EIO network capability *)
 let create ~net =
-  Dns_client_eio.create_from_resolv_conf ~net ()
+  {
+    resolver = Dns_client_eio.create_from_resolv_conf ~net ();
+    mutex = Eio.Mutex.create ();
+  }
 
 (** Convert IP address to string *)
 let ip_to_string = function
@@ -87,59 +96,64 @@ let to_ipaddr = function
 (** Look up TXT records for a domain.
     Returns list of TXT record strings. *)
 let lookup_txt t domain =
-  match Dns_client_eio.lookup_txt t domain with
-  | Ok txt_list -> Ok txt_list
-  | Error (`Msg msg) ->
-    if String.length msg >= 8 && String.sub msg 0 8 = "DNS error" then
-      Error Not_found
-    else
-      Error (Format_error msg)
+  Eio.Mutex.use_rw ~protect:true t.mutex (fun () ->
+    match Dns_client_eio.lookup_txt t.resolver domain with
+    | Ok txt_list -> Ok txt_list
+    | Error (`Msg msg) ->
+      if String.length msg >= 8 && String.sub msg 0 8 = "DNS error" then
+        Error Not_found
+      else
+        Error (Format_error msg))
 
 (** Look up A records for a domain.
     Returns list of IPv4 addresses. *)
 let lookup_a t domain =
-  match Dns_client_eio.lookup_a t domain with
-  | Ok addrs ->
-    Ok (List.map ipv4_of_ipaddr addrs)
-  | Error (`Msg msg) ->
-    if String.length msg >= 8 && String.sub msg 0 8 = "DNS error" then
-      Error Not_found
-    else
-      Error (Format_error msg)
+  Eio.Mutex.use_rw ~protect:true t.mutex (fun () ->
+    match Dns_client_eio.lookup_a t.resolver domain with
+    | Ok addrs ->
+      Ok (List.map ipv4_of_ipaddr addrs)
+    | Error (`Msg msg) ->
+      if String.length msg >= 8 && String.sub msg 0 8 = "DNS error" then
+        Error Not_found
+      else
+        Error (Format_error msg))
 
 (** Look up AAAA records for a domain.
     Returns list of IPv6 addresses. *)
 let lookup_aaaa t domain =
-  match Dns_client_eio.lookup_aaaa t domain with
-  | Ok addrs ->
-    Ok (List.map ipv6_of_ipaddr addrs)
-  | Error (`Msg msg) ->
-    if String.length msg >= 8 && String.sub msg 0 8 = "DNS error" then
-      Error Not_found
-    else
-      Error (Format_error msg)
+  Eio.Mutex.use_rw ~protect:true t.mutex (fun () ->
+    match Dns_client_eio.lookup_aaaa t.resolver domain with
+    | Ok addrs ->
+      Ok (List.map ipv6_of_ipaddr addrs)
+    | Error (`Msg msg) ->
+      if String.length msg >= 8 && String.sub msg 0 8 = "DNS error" then
+        Error Not_found
+      else
+        Error (Format_error msg))
 
 (** Look up MX records for a domain.
     Returns list of (preference, hostname) pairs sorted by preference. *)
 let lookup_mx t domain =
-  match Dns_client_eio.lookup_mx t domain with
-  | Ok mx_list -> Ok mx_list
-  | Error (`Msg msg) ->
-    if String.length msg >= 8 && String.sub msg 0 8 = "DNS error" then
-      Error Not_found
-    else
-      Error (Format_error msg)
+  Eio.Mutex.use_rw ~protect:true t.mutex (fun () ->
+    match Dns_client_eio.lookup_mx t.resolver domain with
+    | Ok mx_list -> Ok mx_list
+    | Error (`Msg msg) ->
+      if String.length msg >= 8 && String.sub msg 0 8 = "DNS error" then
+        Error Not_found
+      else
+        Error (Format_error msg))
 
 (** Look up PTR record for an IP address (reverse DNS). *)
 let lookup_ptr t ip =
   let ipaddr = to_ipaddr ip in
-  match Dns_client_eio.lookup_ptr t ipaddr with
-  | Ok ptr -> Ok ptr
-  | Error (`Msg msg) ->
-    if String.length msg >= 8 && String.sub msg 0 8 = "DNS error" then
-      Error Not_found
-    else
-      Error (Format_error msg)
+  Eio.Mutex.use_rw ~protect:true t.mutex (fun () ->
+    match Dns_client_eio.lookup_ptr t.resolver ipaddr with
+    | Ok ptr -> Ok ptr
+    | Error (`Msg msg) ->
+      if String.length msg >= 8 && String.sub msg 0 8 = "DNS error" then
+        Error Not_found
+      else
+        Error (Format_error msg))
 
 (** Check if an IPv4 address matches a CIDR network *)
 let ipv4_in_network (a1, b1, c1, d1) (a2, b2, c2, d2) prefix_len =
