@@ -758,6 +758,9 @@ module Make
       match Unix.fork () with
       | 0 ->
         Unix.close sock;
+        (* Kill idle connections after 5 minutes (RFC 5321 Section 4.5.3.2) *)
+        Sys.set_signal Sys.sigalrm (Sys.Signal_handle (fun _ -> exit 0));
+        ignore (Unix.alarm (5 * 60));
         Eio_main.run @@ fun env ->
         Eio.Switch.run @@ fun sw ->
         (* Create fresh DNS resolver in child process to avoid EADDRINUSE *)
