@@ -315,16 +315,16 @@ let cmd =
     `P "Development server (memory queue, no TLS):";
     `Pre "  $(tname) -p 2525 --local-domains example.com";
     `P "Production submission server (port 587, auth required):";
-    `Pre "  $(tname) -p 587 --local-domains example.com --require-auth \\
+    `Pre "  $(tname) -p 587 --local-domains example.com --require-auth \\\\
       --cert server.crt --key server.key";
     `P "Production server with fork-per-connection and DKIM signing:";
-    `Pre "  sudo $(tname) --fork --tls -p 465 \\
-      --local-domains example.com,example.org \\
-      --require-auth \\
-      --cert server.crt --key server.key \\
-      --queue-path /var/spool/smtpd \\
-      --dkim-key /etc/smtpd/dkim.key \\
-      --dkim-domain example.com \\
+    `Pre "  sudo $(tname) --fork --tls -p 465 \\\\
+      --local-domains example.com,example.org \\\\
+      --require-auth \\\\
+      --cert server.crt --key server.key \\\\
+      --queue-path /var/spool/smtpd \\\\
+      --dkim-key /etc/smtpd/dkim.key \\\\
+      --dkim-domain example.com \\\\
       --dkim-selector mail";
     `S Manpage.s_bugs;
     `P "Report bugs at https://github.com/mtelvers/ocaml-smtpd/issues";
