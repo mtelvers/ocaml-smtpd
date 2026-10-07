@@ -19,6 +19,7 @@ type deferred_message = {
 type t = {
   local_domains : string list;
   dkim_config : Smtp_dkim.signing_config option;
+  helo_name : string option;  (** EHLO name; the machine's hostname if None *)
   dns : Smtp_dns.t;
   deferred : (string, deferred_message list) Hashtbl.t;  (** msg_id -> deferred recipients *)
   stats : delivery_stats;
@@ -43,10 +44,11 @@ let default_retry_intervals = [|
 |]
 
 (** Create a new queue manager *)
-let create ~local_domains ~dns ?dkim_config () =
+let create ~local_domains ~dns ?helo_name ?dkim_config () =
   {
     local_domains;
     dkim_config;
+    helo_name;
     dns;
     deferred = Hashtbl.create 64;
     stats = create_stats ();
@@ -252,6 +254,7 @@ let process_deferred t =
 
         let result = deliver_to_recipient
             ~dns:t.dns
+            ?helo_name:t.helo_name
             ?dkim_config:t.dkim_config
             ~local_domains:t.local_domains
             ~recipient:deferred.recipient
@@ -294,7 +297,7 @@ let process_message t msg =
     (reverse_path_to_string msg.sender);
 
   (* Attempt delivery to all recipients *)
-  let results = deliver_message ~dns:t.dns ?dkim_config:t.dkim_config ~local_domains:t.local_domains ~msg () in
+  let results = deliver_message ~dns:t.dns ?helo_name:t.helo_name ?dkim_config:t.dkim_config ~local_domains:t.local_domains ~msg () in
   let _all_done = process_results t msg results in
   ()
 

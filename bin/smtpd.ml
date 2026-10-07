@@ -41,7 +41,7 @@ let parse_ipaddr host =
     | _ -> Eio.Net.Ipaddr.V4.loopback
 
 (* Run the server with memory queue - single process mode *)
-let run_single_memory ~port ~host ~tls_config ~implicit_tls ~local_domains ~require_auth ~dkim_config =
+let run_single_memory ~port ~host ~tls_config ~implicit_tls ~local_domains ~require_auth ~helo_name ~dkim_config =
   let module Server = Smtp_server.Make(Smtp_queue.Memory_queue)(Smtp_auth.Pam_auth) in
   let module Qmgr = Smtp_qmgr.Make(Smtp_queue.Memory_queue) in
   Eio_main.run @@ fun env ->
@@ -49,7 +49,7 @@ let run_single_memory ~port ~host ~tls_config ~implicit_tls ~local_domains ~requ
   let dns = Smtp_dns.create ~net in
   let queue = Smtp_queue.Memory_queue.create () in
   let auth = Smtp_auth.Pam_auth.create ~service_name:"smtpd" in
-  let qmgr = Smtp_qmgr.create ~local_domains ~dns ?dkim_config () in
+  let qmgr = Smtp_qmgr.create ~local_domains ~dns ?helo_name ?dkim_config () in
 
   let config = {
     Smtp_server.default_config with
@@ -80,7 +80,7 @@ let run_single_memory ~port ~host ~tls_config ~implicit_tls ~local_domains ~requ
     Server.run server ~sw ~net ~addr ()
 
 (* Run the server with file queue - single process mode *)
-let run_single_file ~port ~host ~tls_config ~implicit_tls ~local_domains ~require_auth ~queue_path ~dkim_config =
+let run_single_file ~port ~host ~tls_config ~implicit_tls ~local_domains ~require_auth ~queue_path ~helo_name ~dkim_config =
   let module Server = Smtp_server.Make(Smtp_queue.File_queue)(Smtp_auth.Pam_auth) in
   let module Qmgr = Smtp_qmgr.Make(Smtp_queue.File_queue) in
   Eio_main.run @@ fun env ->
@@ -88,7 +88,7 @@ let run_single_file ~port ~host ~tls_config ~implicit_tls ~local_domains ~requir
   let dns = Smtp_dns.create ~net in
   let queue = Smtp_queue.File_queue.create_with_path ~base_path:queue_path in
   let auth = Smtp_auth.Pam_auth.create ~service_name:"smtpd" in
-  let qmgr = Smtp_qmgr.create ~local_domains ~dns ?dkim_config () in
+  let qmgr = Smtp_qmgr.create ~local_domains ~dns ?helo_name ?dkim_config () in
 
   let config = {
     Smtp_server.default_config with
@@ -119,7 +119,7 @@ let run_single_file ~port ~host ~tls_config ~implicit_tls ~local_domains ~requir
     Server.run server ~sw ~net ~addr ()
 
 (* Run the server with file queue - forked mode with per-user privileges *)
-let run_forked ~port ~host ~tls_config ~local_domains ~require_auth ~queue_path ~dkim_config =
+let run_forked ~port ~host ~tls_config ~local_domains ~require_auth ~queue_path ~helo_name ~dkim_config =
   let module Server = Smtp_server.Make(Smtp_queue.File_queue)(Smtp_auth.Pam_auth) in
   let module Qmgr = Smtp_qmgr.Make(Smtp_queue.File_queue) in
 
@@ -136,7 +136,7 @@ let run_forked ~port ~host ~tls_config ~local_domains ~require_auth ~queue_path 
      let net = Eio.Stdenv.net env in
      let dns = Smtp_dns.create ~net in
      let queue = Smtp_queue.File_queue.create_with_path ~base_path:queue_path in
-     let qmgr = Smtp_qmgr.create ~local_domains ~dns ?dkim_config () in
+     let qmgr = Smtp_qmgr.create ~local_domains ~dns ?helo_name ?dkim_config () in
      Eio.Switch.run @@ fun sw ->
      Qmgr.run_eio qmgr queue ~sw;
      (* Keep running until stopped *)
@@ -163,7 +163,7 @@ let run_forked ~port ~host ~tls_config ~local_domains ~require_auth ~queue_path 
 
 (* Main entry point *)
 let run port host cert_file key_file implicit_tls forked local_domains require_auth queue_path
-    dkim_key_file dkim_domain dkim_selector =
+    dkim_key_file dkim_domain dkim_selector helo_name =
   (* Enable backtrace recording for debugging *)
   Printexc.record_backtrace true;
   (* Initialize cryptographic RNG for TLS *)
@@ -225,9 +225,9 @@ let run port host cert_file key_file implicit_tls forked local_domains require_a
   end;
 
   match forked, queue_path with
-  | true, _ -> run_forked ~port ~host ~tls_config ~local_domains ~require_auth ~queue_path ~dkim_config
-  | false, "" -> run_single_memory ~port ~host ~tls_config ~implicit_tls ~local_domains ~require_auth ~dkim_config
-  | false, _ -> run_single_file ~port ~host ~tls_config ~implicit_tls ~local_domains ~require_auth ~queue_path ~dkim_config
+  | true, _ -> run_forked ~port ~host ~tls_config ~local_domains ~require_auth ~queue_path ~helo_name ~dkim_config
+  | false, "" -> run_single_memory ~port ~host ~tls_config ~implicit_tls ~local_domains ~require_auth ~helo_name ~dkim_config
+  | false, _ -> run_single_file ~port ~host ~tls_config ~implicit_tls ~local_domains ~require_auth ~queue_path ~helo_name ~dkim_config
 
 (* Command-line arguments *)
 let port =
@@ -281,6 +281,12 @@ let dkim_selector =
   let doc = "Selector for DKIM signing (s= tag). Required with --dkim-key." in
   Arg.(value & opt (some string) None & info ["dkim-selector"] ~docv:"SELECTOR" ~doc)
 
+let helo_name =
+  let doc = "Name to greet remote servers with (EHLO) when delivering outbound \
+             mail. Defaults to the machine's hostname. Receivers expect a fully \
+             qualified name that matches this server's reverse DNS." in
+  Arg.(value & opt (some string) None & info ["helo-name"] ~docv:"NAME" ~doc)
+
 let cmd =
   let doc = "SMTP server (RFC 5321)" in
   let man = [
@@ -332,6 +338,6 @@ let cmd =
   let info = Cmd.info "smtpd" ~version:"0.1.0" ~doc ~man in
   Cmd.v info Term.(const run $ port $ host $ cert_file $ key_file $ implicit_tls
                    $ forked $ local_domains $ require_auth $ queue_path
-                   $ dkim_key $ dkim_domain $ dkim_selector)
+                   $ dkim_key $ dkim_domain $ dkim_selector $ helo_name)
 
 let () = exit (Cmd.eval cmd)

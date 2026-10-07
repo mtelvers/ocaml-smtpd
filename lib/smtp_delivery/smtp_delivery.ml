@@ -284,31 +284,52 @@ module Remote = struct
       | exn ->
         Error (Printf.sprintf "TLS error: %s" (Printexc.to_string exn))
 
+  (** Connect to the first of [addrs] that accepts, in getaddrinfo's order
+      (so /etc/gai.conf preferences apply). Every step of an attempt is
+      guarded, so an address family the machine cannot use (IPv6 disabled,
+      say) moves on to the next address instead of abandoning the host. *)
+  let connect_any ~host addrs =
+    let attempt addr =
+      match Unix.socket addr.Unix.ai_family Unix.SOCK_STREAM 0 with
+      | exception Unix.Unix_error (code, _, _) -> Error code
+      | sock -> (
+          match
+            Unix.setsockopt_float sock Unix.SO_RCVTIMEO 30.0;
+            Unix.setsockopt_float sock Unix.SO_SNDTIMEO 30.0;
+            Unix.connect sock addr.Unix.ai_addr
+          with
+          | () -> Ok sock
+          | exception Unix.Unix_error (code, _, _) ->
+            Unix.close sock;
+            Error code)
+    in
+    let rec go last_error = function
+      | [] -> Error last_error
+      | addr :: rest -> (
+          match attempt addr with
+          | Ok sock -> Ok sock
+          | Error code ->
+            go (Printf.sprintf "Connect failed: %s" (Unix.error_message code)) rest)
+    in
+    go ("Could not resolve: " ^ host) addrs
+
   (** Connect to an SMTP server and send a message.
 
+      @param helo_name Name sent in EHLO; should match this IP's reverse DNS
       @param host Remote server hostname
       @param port Remote server port (default 25)
       @param sender Envelope sender
       @param recipient Envelope recipient
       @param message Message content
       @return Delivery result *)
-  let deliver ~host ~port ~sender ~recipient ~message =
+  let deliver ~helo_name ~host ~port ~sender ~recipient ~message =
     try
       (* Resolve hostname *)
       let addrs = Unix.getaddrinfo host (string_of_int port)
           [Unix.AI_SOCKTYPE Unix.SOCK_STREAM] in
-      match addrs with
-      | [] -> Deferred ("Could not resolve: " ^ host)
-      | addr :: _ ->
-        (* Connect *)
-        let sock = Unix.socket addr.Unix.ai_family Unix.SOCK_STREAM 0 in
-        Unix.setsockopt_float sock Unix.SO_RCVTIMEO 30.0;
-        Unix.setsockopt_float sock Unix.SO_SNDTIMEO 30.0;
-
-        (try Unix.connect sock addr.Unix.ai_addr
-         with Unix.Unix_error (code, _, _) ->
-           Unix.close sock;
-           raise (Failure (Printf.sprintf "Connect failed: %s" (Unix.error_message code))));
+      match connect_any ~host addrs with
+      | Error reason -> Deferred reason
+      | Ok sock ->
 
         let ic = Unix.in_channel_of_descr sock in
         let oc = Unix.out_channel_of_descr sock in
@@ -328,7 +349,7 @@ module Remote = struct
          | _ ->
 
            (* Send EHLO *)
-           let my_hostname = Unix.gethostname () in
+           let my_hostname = helo_name in
            let ehlo_response = send_command !ctx ("EHLO " ^ my_hostname) in
 
            let (ehlo_ok, starttls_available) = match ehlo_response with
@@ -449,11 +470,13 @@ module Remote = struct
       Looks up MX records and tries each in order of priority.
 
       @param dns DNS resolver for MX lookups
+      @param helo_name Name sent in EHLO; the machine's hostname if omitted
       @param dkim_config Optional DKIM signing configuration
       @param recipient The recipient email address
       @param msg The queued message
       @return Delivery result *)
-  let deliver_message ~dns ?(dkim_config : Smtp_dkim.signing_config option) ~recipient ~msg () =
+  let deliver_message ~dns ?helo_name ?(dkim_config : Smtp_dkim.signing_config option) ~recipient ~msg () =
+    let helo_name = Option.value helo_name ~default:(Unix.gethostname ()) in
     match lookup_mx ~dns recipient.domain with
     | Error e -> Deferred e
     | Ok mx_hosts ->
@@ -463,8 +486,10 @@ module Remote = struct
         | Some config ->
           match Smtp_dkim.sign_message ~config ~message:msg.data with
           | Ok signed -> signed
-          | Error _e ->
-            (* If signing fails, send unsigned - log this in production *)
+          | Error e ->
+            (* Send unsigned rather than lose the message, but say so: unsigned
+               mail fails DMARC once the domain's policy is enforced. *)
+            Printf.eprintf "DKIM signing failed, sending unsigned: %s\n%!" e;
             msg.data
       in
       (* Try each MX host in priority order *)
@@ -476,7 +501,7 @@ module Remote = struct
             then String.sub host 0 (String.length host - 1)
             else host
           in
-          match deliver ~host ~port:25 ~sender:msg.sender ~recipient ~message:message_to_send with
+          match deliver ~helo_name ~host ~port:25 ~sender:msg.sender ~recipient ~message:message_to_send with
           | Delivered -> Delivered
           | Failed reason -> Failed reason  (* Permanent failure, don't try other hosts *)
           | Deferred _ -> try_hosts rest    (* Try next host *)
@@ -497,20 +522,22 @@ let is_local_recipient ~local_domains recipient =
     Routes to local Maildir or remote SMTP based on domain.
 
     @param dns DNS resolver for remote delivery
+    @param helo_name Name sent in EHLO; the machine's hostname if omitted
     @param dkim_config Optional DKIM signing configuration for outbound messages *)
-let deliver_to_recipient ~dns ?dkim_config ~local_domains ~recipient ~msg () =
+let deliver_to_recipient ~dns ?helo_name ?dkim_config ~local_domains ~recipient ~msg () =
   if is_local_recipient ~local_domains recipient then
     Maildir.deliver_message ~recipient ~msg
   else
-    Remote.deliver_message ~dns ?dkim_config ~recipient ~msg ()
+    Remote.deliver_message ~dns ?helo_name ?dkim_config ~recipient ~msg ()
 
 (** Deliver a queued message to all recipients.
 
     @param dns DNS resolver for remote delivery
+    @param helo_name Name sent in EHLO; the machine's hostname if omitted
     @param dkim_config Optional DKIM signing configuration for outbound messages
     @return List of (recipient, result) pairs *)
-let deliver_message ~dns ?dkim_config ~local_domains ~msg () =
+let deliver_message ~dns ?helo_name ?dkim_config ~local_domains ~msg () =
   List.map (fun recipient ->
-    let result = deliver_to_recipient ~dns ?dkim_config ~local_domains ~recipient ~msg () in
+    let result = deliver_to_recipient ~dns ?helo_name ?dkim_config ~local_domains ~recipient ~msg () in
     (recipient, result)
   ) msg.recipients

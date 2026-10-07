@@ -10,10 +10,13 @@ type t
 
     @param local_domains List of domains considered local
     @param dns DNS resolver for remote delivery
+    @param helo_name Name to greet remote servers with (EHLO); defaults to the
+      machine's hostname. It should match this IP's reverse DNS.
     @param dkim_config Optional DKIM signing configuration for outbound messages *)
 val create :
   local_domains:string list ->
   dns:Smtp_dns.t ->
+  ?helo_name:string ->
   ?dkim_config:Smtp_dkim.signing_config ->
   unit ->
   t

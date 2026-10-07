@@ -60,6 +60,7 @@ module Remote : sig
 
   (** Connect to an SMTP server and send a message.
 
+      @param helo_name Name sent in EHLO; should match this IP's reverse DNS
       @param host Remote server hostname
       @param port Remote server port (default 25)
       @param sender Envelope sender
@@ -67,6 +68,7 @@ module Remote : sig
       @param message Message content
       @return Delivery result *)
   val deliver :
+    helo_name:string ->
     host:string ->
     port:int ->
     sender:Smtp_types.email_address option ->
@@ -78,9 +80,11 @@ module Remote : sig
       Looks up MX records and tries each host.
 
       @param dns DNS resolver for MX lookups
+      @param helo_name Name sent in EHLO; the machine's hostname if omitted
       @param dkim_config Optional DKIM signing configuration for outbound signing *)
   val deliver_message :
     dns:Smtp_dns.t ->
+    ?helo_name:string ->
     ?dkim_config:Smtp_dkim.signing_config ->
     recipient:Smtp_types.email_address ->
     msg:Smtp_types.queued_message ->
@@ -100,9 +104,11 @@ val is_local_recipient :
     Routes to local Maildir or remote SMTP based on domain.
 
     @param dns DNS resolver for remote delivery
+    @param helo_name Name sent in EHLO; the machine's hostname if omitted
     @param dkim_config Optional DKIM signing configuration for outbound messages *)
 val deliver_to_recipient :
   dns:Smtp_dns.t ->
+  ?helo_name:string ->
   ?dkim_config:Smtp_dkim.signing_config ->
   local_domains:string list ->
   recipient:Smtp_types.email_address ->
@@ -113,10 +119,12 @@ val deliver_to_recipient :
 (** Deliver a queued message to all recipients.
 
     @param dns DNS resolver for remote delivery
+    @param helo_name Name sent in EHLO; the machine's hostname if omitted
     @param dkim_config Optional DKIM signing configuration for outbound messages
     @return List of (recipient, result) pairs *)
 val deliver_message :
   dns:Smtp_dns.t ->
+  ?helo_name:string ->
   ?dkim_config:Smtp_dkim.signing_config ->
   local_domains:string list ->
   msg:Smtp_types.queued_message ->
