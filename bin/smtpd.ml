@@ -138,9 +138,11 @@ let run_forked ~port ~host ~tls_config ~local_domains ~require_auth ~queue_path 
      let queue = Smtp_queue.File_queue.create_with_path ~base_path:queue_path in
      let qmgr = Smtp_qmgr.create ~local_domains ~dns ?dkim_config () in
      Eio.Switch.run @@ fun sw ->
-     Qmgr.run_eio qmgr queue ~sw;
-     (* Keep running until stopped *)
-     while true do Unix.sleep 3600 done
+     (* The switch waits for the queue manager's fiber, so the process lives
+        as long as that fiber runs. Do not block here: an Eio fiber only
+        yields at Eio operations, so a blocking Unix.sleep left the queue
+        manager running about once an hour. *)
+     Qmgr.run_eio qmgr queue ~sw
    | _pid ->
      (* Parent: run SMTP server *)
      Eio_main.run @@ fun env ->
