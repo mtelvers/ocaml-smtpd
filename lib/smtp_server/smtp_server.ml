@@ -141,12 +141,30 @@ module Make
         send_response flow bad_sequence;
         state
 
+  (** Whether [client_ip] is this machine. Unauthenticated relay is only ever
+      allowed from here (the same default as Postfix's mynetworks), so a
+      listener bound beyond loopback by mistake never becomes an open relay. *)
+  let is_loopback client_ip =
+    String.starts_with ~prefix:"127." client_ip
+    || client_ip = "::1"
+    || String.starts_with ~prefix:"::ffff:127." client_ip
+
+  (** The relay rule. Authenticated clients, and mail for local domains, are
+      always accepted ([is_relay_allowed]). Without --require-auth, local
+      processes (loopback clients) may also relay unauthenticated: the case of
+      an application handing mail to its own outbound relay. Before this, the
+      flag was never consulted, so unauthenticated relay was refused even
+      without it. *)
+  let relay_allowed t ~client_ip ~state ~recipient =
+    is_relay_allowed ~state ~recipient ~local_domains:t.config.local_domains
+    || ((not t.config.require_auth_for_relay) && is_loopback client_ip)
+
   (** Handle RCPT TO command - CRITICAL CLOSED RELAY ENFORCEMENT *)
-  let handle_rcpt_to t flow recipient _params state =
+  let handle_rcpt_to t flow ~client_ip recipient _params state =
     match state with
     | Mail_from_accepted { username; client_domain; sender; params; tls_active } ->
       (* CRITICAL: Check if relay is allowed *)
-      if not (is_relay_allowed ~state ~recipient ~local_domains:t.config.local_domains) then begin
+      if not (relay_allowed t ~client_ip ~state ~recipient) then begin
         (* Log attempted relay for security monitoring *)
         Eio.traceln "RELAY DENIED: %s -> %s (auth=%s)"
           (reverse_path_to_string sender)
@@ -172,7 +190,7 @@ module Make
         state
       end
       (* CRITICAL: Check if relay is allowed *)
-      else if not (is_relay_allowed ~state ~recipient ~local_domains:t.config.local_domains) then begin
+      else if not (relay_allowed t ~client_ip ~state ~recipient) then begin
         Eio.traceln "RELAY DENIED: %s -> %s (auth=%s)"
           (reverse_path_to_string sender)
           (email_to_string recipient)
@@ -532,7 +550,7 @@ module Make
     | Mail_from { reverse_path; params } ->
       (handle_mail_from t flow reverse_path params state, Continue)
     | Rcpt_to { forward_path; params } ->
-      (handle_rcpt_to t flow forward_path params state, Continue)
+      (handle_rcpt_to t flow ~client_ip forward_path params state, Continue)
     | Data ->
       (handle_data t flow ~read_line ~client_ip state, Continue)
     | Rset ->

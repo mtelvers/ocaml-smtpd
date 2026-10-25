@@ -64,7 +64,7 @@ let run_single_memory ~port ~host ~tls_config ~implicit_tls ~local_domains ~requ
     else if tls_config <> None then " (STARTTLS available)" else "" in
   Eio.traceln "SMTP server starting on %s:%d (memory queue, single-process)%s" host port tls_mode;
   Eio.traceln "Local domains: %s" (String.concat ", " local_domains);
-  Eio.traceln "Relay policy: %s" (if require_auth then "authentication required" else "open relay (DANGEROUS)");
+  Eio.traceln "Relay policy: %s" (if require_auth then "authentication required" else "loopback clients may relay without authentication");
 
   Eio.Switch.run @@ fun sw ->
   (* Start queue manager in background *)
@@ -103,7 +103,7 @@ let run_single_file ~port ~host ~tls_config ~implicit_tls ~local_domains ~requir
     else if tls_config <> None then " (STARTTLS available)" else "" in
   Eio.traceln "SMTP server starting on %s:%d (%s, single-process)%s" host port queue_path tls_mode;
   Eio.traceln "Local domains: %s" (String.concat ", " local_domains);
-  Eio.traceln "Relay policy: %s" (if require_auth then "authentication required" else "open relay (DANGEROUS)");
+  Eio.traceln "Relay policy: %s" (if require_auth then "authentication required" else "loopback clients may relay without authentication");
 
   Eio.Switch.run @@ fun sw ->
   (* Start queue manager in background *)
@@ -126,7 +126,7 @@ let run_forked ~port ~host ~tls_config ~local_domains ~require_auth ~queue_path 
   let tls_mode = if tls_config <> None then " (implicit TLS)" else "" in
   Printf.eprintf "+SMTP server starting on %s:%d (%s, fork-per-connection)%s\n%!" host port queue_path tls_mode;
   Printf.eprintf "+Local domains: %s\n%!" (String.concat ", " local_domains);
-  Printf.eprintf "+Relay policy: %s\n%!" (if require_auth then "authentication required" else "open relay (DANGEROUS)");
+  Printf.eprintf "+Relay policy: %s\n%!" (if require_auth then "authentication required" else "loopback clients may relay without authentication");
 
   (* Fork a separate process for queue manager *)
   (match Unix.fork () with
@@ -215,8 +215,8 @@ let run port host cert_file key_file implicit_tls forked local_domains require_a
 
   (* Warn about open relay if no auth required *)
   if not require_auth then begin
-    Printf.eprintf "WARNING: Running as open relay! This is dangerous.\n%!";
-    Printf.eprintf "WARNING: Use --require-auth to enforce authentication for relay.\n%!";
+    Printf.eprintf "WARNING: Unauthenticated relay is allowed from loopback (127.0.0.1, ::1).\n%!";
+    Printf.eprintf "WARNING: Use --require-auth to require authentication from every client.\n%!";
   end;
 
   (* Warn if no local domains configured *)
@@ -262,7 +262,9 @@ let local_domains =
 
 let require_auth =
   let doc = "Require authentication to relay to external domains (closed relay). \
-             STRONGLY RECOMMENDED for production." in
+             Without it, clients connecting from loopback may relay without \
+             authentication; remote clients never can. STRONGLY RECOMMENDED \
+             unless the server only serves applications on the same host." in
   Arg.(value & flag & info ["require-auth"] ~doc)
 
 let queue_path =
