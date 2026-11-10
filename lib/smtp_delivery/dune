@@ -1,4 +1,4 @@
 (library
  (name smtp_delivery)
  (public_name smtpd.delivery)
- (libraries smtp_types smtp_dns smtp_dkim unix str tls tls.unix mirage-crypto-rng.unix x509 ca-certs domain-name))
+ (libraries smtp_types smtp_dns smtp_dkim unix str tls tls.unix mirage-crypto-rng.unix x509 ca-certs domain-name eio.unix))
